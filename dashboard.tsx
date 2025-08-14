@@ -31,16 +31,25 @@ export default function Component() {
     if (!searchQuery.trim()) return
 
     setIsLoading(true)
-    // Simulate API call
-    setTimeout(() => {
-      setSqlQuery(`SELECT customer_name, total_sales, order_date 
-FROM sales_data 
-WHERE order_date >= '2024-01-01' 
-AND total_sales > 1000 
-ORDER BY total_sales DESC 
-LIMIT 10;`)
+    setSqlQuery("")
+    try {
+      const res = await fetch("/api/nl2sql", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ prompt: searchQuery, dbType: selectedDatabase || undefined }),
+      })
+      if (!res.ok) {
+        throw new Error(`Request failed: ${res.status}`)
+      }
+      const data = await res.json()
+      const content = (data?.sql || data?.content || "").toString()
+      setSqlQuery(content.trim())
+    } catch (error) {
+      console.error(error)
+      setSqlQuery("-- Error generating SQL. Please try again.")
+    } finally {
       setIsLoading(false)
-    }, 1500)
+    }
   }
 
   const handleDatabaseChange = (value: string) => {
