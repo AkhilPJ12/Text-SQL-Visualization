@@ -40,7 +40,7 @@ Return only the SQL.`
 				{ role: "user", content: userPrompt },
 			],
 			max_completion_tokens: 800,
-			temperature: 0.1,
+			temperature: 1,
 		})
 
 		const content = result?.choices?.[0]?.message?.content ?? ""

@@ -1,4 +1,4 @@
-// File: /workspace/app/api/nl2sql/route.ts
+// File: /Users/akhil/Desktop/Projects/Text-SQL-Visualization/app/api/nl2sql/route.ts
 import * as entry from '../../../../../app/api/nl2sql/route.js'
 import type { NextRequest } from 'next/server.js'
 
