@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from "react"
+import { useState, useEffect } from "react"
 import { Search, Database, Shield } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -11,11 +11,15 @@ import { Label } from "@/components/ui/label"
 import { Alert, AlertDescription } from "@/components/ui/alert"
 
 export default function Component() {
+  const [mounted, setMounted] = useState(false)
   const [searchQuery, setSearchQuery] = useState("")
   const [sqlQuery, setSqlQuery] = useState("")
   const [isLoading, setIsLoading] = useState(false)
   const [selectedDatabase, setSelectedDatabase] = useState("")
   const [selectedEngine, setSelectedEngine] = useState("")
+  const [databaseMetadata, setDatabaseMetadata] = useState<any>(null)
+  const [connectionStatus, setConnectionStatus] = useState<'idle' | 'testing' | 'connected' | 'failed' | 'no_tables'>('idle')
+  const [connectionError, setConnectionError] = useState("")
   const [connectionFields, setConnectionFields] = useState({
     host: "",
     port: "",
@@ -27,16 +31,110 @@ export default function Component() {
     serverName: "",
   })
 
+  // Use useEffect to ensure client-side only state updates
+  useEffect(() => {
+    setMounted(true)
+  }, [])
+
+  const testDatabaseConnection = async () => {
+    if (!selectedDatabase || !connectionFields.host) return
+
+    setConnectionStatus('testing')
+    setConnectionError("")
+    setDatabaseMetadata(null)
+
+    try {
+      const res = await fetch("/api/database/test", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          type: selectedDatabase,
+          host: connectionFields.host,
+          port: connectionFields.port,
+          database: connectionFields.databaseName, // Map databaseName to database
+          username: connectionFields.username,
+          password: connectionFields.password,
+          filePath: connectionFields.filePath,
+          serviceName: connectionFields.serviceName,
+          serverName: connectionFields.serverName,
+        }),
+      })
+
+      const data = await res.json()
+      
+      if (data.success) {
+        setConnectionStatus(data.connectionStatus)
+        if (data.connectionStatus === 'connected') {
+          setDatabaseMetadata(data)
+          setConnectionError("")
+        } else if (data.connectionStatus === 'no_tables') {
+          setConnectionError("Connection successful but no tables found. User may not have access to any tables.")
+        }
+      } else {
+        setConnectionStatus('failed')
+        setConnectionError(data.error || "Connection failed")
+        setDatabaseMetadata(null)
+      }
+    } catch (error) {
+      setConnectionStatus('failed')
+      setConnectionError("Failed to test connection")
+      setDatabaseMetadata(null)
+    }
+  }
+
   const handleSearch = async () => {
     if (!searchQuery.trim()) return
 
     setIsLoading(true)
     setSqlQuery("")
+    
+    // Show appropriate message based on database connection status
+    if (connectionStatus !== 'connected') {
+      if (connectionStatus === 'idle') {
+        // Generate SQL without database context but show warning
+        try {
+          const res = await fetch("/api/nl2sql", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ 
+              prompt: searchQuery, 
+              dbType: undefined,
+              databaseMetadata: null
+            }),
+          })
+          if (!res.ok) {
+            throw new Error(`Request failed: ${res.status}`)
+          }
+          const data = await res.json()
+          const content = (data?.sql || data?.content || "").toString()
+          const warningMessage = "-- Note: No database selected. Generated SQL is based only on your prompt and may not be accurate.\n-- To get accurate SQL, please select a database and provide connection details.\n-- This will allow us to fetch table schemas for better query generation.\n\n-- SQL Query - Solely generated based on the user prompt:\n"
+          setSqlQuery(warningMessage + content.trim())
+        } catch (error) {
+          console.error(error)
+          setSqlQuery("-- Note: No database selected. Generated SQL is based only on your prompt and may not be accurate.\n-- To get accurate SQL, please select a database and provide connection details.\n-- This will allow us to fetch table schemas for better query generation.\n\n-- Error: Could not generate SQL. Please try again.")
+        }
+        setIsLoading(false)
+        return
+      } else if (connectionStatus === 'failed') {
+        setSqlQuery(`-- Database connection failed: ${connectionError}\n-- Please check your connection details and try again.`)
+        setIsLoading(false)
+        return
+      } else if (connectionStatus === 'no_tables') {
+        setSqlQuery(`-- Database connected but no tables accessible: ${connectionError}\n-- Generated SQL may not be accurate without table schema information.`)
+        setIsLoading(false)
+        return
+      }
+    }
+
     try {
       const res = await fetch("/api/nl2sql", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ prompt: searchQuery, dbType: selectedDatabase || undefined }),
+        body: JSON.stringify({ 
+          prompt: searchQuery, 
+          dbType: selectedDatabase || undefined,
+          databaseMetadata: databaseMetadata
+        }),
       })
       if (!res.ok) {
         throw new Error(`Request failed: ${res.status}`)
@@ -65,6 +163,11 @@ export default function Component() {
       serviceName: "",
       serverName: "",
     })
+  }
+
+  // Check if component is mounted before rendering
+  if (!mounted) {
+    return null // Return null during SSR to prevent hydration mismatch
   }
 
   const getDefaultPort = (dbType: string, engine?: string) => {
@@ -638,6 +741,87 @@ export default function Component() {
               </div>
 
               {renderConnectionFields()}
+              
+              {/* Test Connection Button and Status */}
+              {selectedDatabase && connectionFields.host && (
+                <div className="mt-6 space-y-4">
+                  <Button 
+                    onClick={testDatabaseConnection}
+                    disabled={connectionStatus === 'testing'}
+                    className="w-full"
+                    variant={connectionStatus === 'connected' ? 'default' : 'outline'}
+                  >
+                    {connectionStatus === 'testing' ? 'Testing Connection...' : 
+                     connectionStatus === 'connected' ? '✓ Connection Successful' : 
+                     'Test Connection'}
+                  </Button>
+                  
+                  {/* Test All Databases Button */}
+                  <Button 
+                    onClick={async () => {
+                      try {
+                        const res = await fetch("/api/database/test-all")
+                        const data = await res.json()
+                        if (data.success) {
+                          alert(`Database Status:\n\nReady: ${data.summary.ready}\nRequires Package: ${data.summary.requires_package}\n\nCheck console for details.`)
+                          console.log('All Database Status:', data.results)
+                        }
+                      } catch (error) {
+                        alert('Failed to check database status')
+                      }
+                    }}
+                    variant="outline"
+                    className="w-full"
+                  >
+                    🔍 Check All Database Support
+                  </Button>
+                  
+                  {/* Connection Status */}
+                  {connectionStatus !== 'idle' && (
+                    <div className={`p-3 rounded-lg text-sm ${
+                      connectionStatus === 'connected' ? 'bg-green-50 text-green-800 border border-green-200' :
+                      connectionStatus === 'failed' ? 'bg-red-50 text-red-800 border border-red-200' :
+                      connectionStatus === 'no_tables' ? 'bg-yellow-50 text-yellow-800 border border-yellow-200' :
+                      'bg-blue-50 text-blue-800 border border-blue-200'
+                    }`}>
+                      {connectionStatus === 'connected' && (
+                        <div>
+                          <strong>✓ Connected Successfully!</strong>
+                          <br />
+                          Found {databaseMetadata?.totalTables || 0} tables with schema information.
+                          <br />
+                          <span className="text-green-600">SQL queries will now be generated with accurate table and column information.</span>
+                        </div>
+                      )}
+                      {connectionStatus === 'failed' && (
+                        <div>
+                          <strong>✗ Connection Failed</strong>
+                          <br />
+                          {connectionError}
+                          <br />
+                          <span className="text-red-600">Please check your connection details and try again.</span>
+                        </div>
+                      )}
+                      {connectionStatus === 'no_tables' && (
+                        <div>
+                          <strong>⚠ Connection Successful but No Tables Found</strong>
+                          <br />
+                          {connectionError}
+                          <br />
+                          <span className="text-yellow-600">SQL queries may not be accurate without table schema information.</span>
+                        </div>
+                      )}
+                      {connectionStatus === 'testing' && (
+                        <div>
+                          <strong>🔄 Testing Connection...</strong>
+                          <br />
+                          Please wait while we verify your database connection and fetch schema information.
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
             </CardContent>
           </Card>
         </div>
@@ -665,6 +849,11 @@ export default function Component() {
                     <div className="text-center">
                       <Database className="h-8 w-8 mx-auto mb-2 opacity-50" />
                       <p>Your SQL query will appear here</p>
+                      {connectionStatus === 'idle' && (
+                        <p className="text-xs mt-2 text-slate-400">
+                          Tip: Select a database and test connection for more accurate SQL generation
+                        </p>
+                      )}
                     </div>
                   </div>
                 )}
