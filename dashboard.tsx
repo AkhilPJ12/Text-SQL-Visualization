@@ -7,7 +7,7 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Textarea } from "@/components/ui/textarea"
-import { Database, Search, BarChart3, TrendingUp, PieChart, Table } from "lucide-react"
+import { Database, Search, BarChart3, TrendingUp, PieChart, Table, Shield, CheckCircle } from "lucide-react"
 import VisualizationRenderer from "@/components/VisualizationRenderer"
 import { Alert, AlertDescription } from "@/components/ui/alert"
 
@@ -89,73 +89,66 @@ export default function Component() {
 
   const handleSearch = async () => {
     if (!searchQuery.trim()) return
-
     setIsLoading(true)
     setSqlQuery("")
+    setQueryResults(null)
+    setVisualizations([])
     
-    // Show appropriate message based on database connection status
     if (connectionStatus !== 'connected') {
       if (connectionStatus === 'idle') {
-        // Generate SQL without database context but show warning
         try {
           const res = await fetch("/api/nl2sql", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ 
-              prompt: searchQuery, 
-              dbType: undefined,
-              databaseMetadata: null
-            }),
+            body: JSON.stringify({ prompt: searchQuery, dbType: selectedDatabase || undefined }),
           })
-          if (!res.ok) {
-            throw new Error(`Request failed: ${res.status}`)
-          }
+          if (!res.ok) { throw new Error(`Request failed: ${res.status}`) }
           const data = await res.json()
           const content = (data?.sql || data?.content || "").toString()
           const warningMessage = "-- Note: No database selected. Generated SQL is based only on your prompt and may not be accurate.\n-- To get accurate SQL, please select a database and provide connection details.\n-- This will allow us to fetch table schemas for better query generation.\n\n-- SQL Query - Solely generated based on the user prompt:\n"
           setSqlQuery(warningMessage + content.trim())
         } catch (error) {
-          console.error(error)
+          console.error("Error generating SQL:", error)
           setSqlQuery("-- Note: No database selected. Generated SQL is based only on your prompt and may not be accurate.\n-- To get accurate SQL, please select a database and provide connection details.\n-- This will allow us to fetch table schemas for better query generation.\n\n-- Error: Could not generate SQL. Please try again.")
         }
         setIsLoading(false)
         return
       } else if (connectionStatus === 'failed') {
-        setSqlQuery(`-- Database connection failed: ${connectionError}\n-- Please check your connection details and try again.`)
+        setSqlQuery("-- Database connection failed. Please check your connection settings and try again.")
         setIsLoading(false)
         return
       } else if (connectionStatus === 'no_tables') {
-        setSqlQuery(`-- Database connected but no tables accessible: ${connectionError}\n-- Generated SQL may not be accurate without table schema information.`)
+        setSqlQuery("-- Database connected but no accessible tables found. Please check your database permissions.")
         setIsLoading(false)
         return
       }
     }
-
+    
     try {
       const res = await fetch("/api/nl2sql", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ 
-          prompt: searchQuery, 
-          dbType: selectedDatabase || undefined,
-          databaseMetadata: databaseMetadata
-        }),
+        body: JSON.stringify({ prompt: searchQuery, dbType: selectedDatabase || undefined, databaseMetadata: databaseMetadata }),
       })
-      if (!res.ok) {
-        throw new Error(`Request failed: ${res.status}`)
-      }
+      if (!res.ok) { throw new Error(`Request failed: ${res.status}`) }
       const data = await res.json()
       const content = (data?.sql || data?.content || "").toString()
       setSqlQuery(content.trim())
+      
+      // Auto-execute query and generate visualizations if database is connected
+      if (connectionStatus === 'connected' && content.trim()) {
+        // Execute the query first
+        await executeQuery(content.trim())
+      }
     } catch (error) {
-      console.error(error)
-      setSqlQuery("-- Error generating SQL. Please try again.")
+      console.error("Error generating SQL:", error)
+      setSqlQuery("-- Error: Could not generate SQL. Please try again.")
     } finally {
       setIsLoading(false)
     }
   }
 
-  const executeQuery = async () => {
+  const executeQuery = async (sqlQuery: string) => {
     if (!sqlQuery || connectionStatus !== 'connected') return
     
     setIsExecuting(true)
@@ -955,56 +948,89 @@ export default function Component() {
             </CardContent>
           </Card>
           
-          {/* Execute Query Button */}
-          {sqlQuery && connectionStatus === 'connected' && (
-            <div className="mt-4">
-              <Button 
-                onClick={executeQuery}
-                disabled={isExecuting}
-                className="w-full"
-                variant="default"
-                size="lg"
-              >
-                {isExecuting ? (
-                  <>
-                    <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white mr-2"></div>
-                    Executing Query...
-                  </>
-                  ) : (
-                  <>
-                    🚀 Execute Query & Generate Visualizations
-                  </>
-                )}
-              </Button>
-            </div>
-          )}
+        </div>
+        
+        {/* Query Results */}
+        <div className="mb-8">
+          <div className="mb-6">
+            <h2 className="text-2xl font-bold text-slate-900 dark:text-slate-100 mb-2">Query Results</h2>
+            <p className="text-slate-600 dark:text-slate-400">
+              Results from your SQL query execution
+            </p>
+          </div>
           
-          {/* Query Results */}
           {queryResults && (
-            <div className="mt-4">
+            <div className="space-y-4">
+              {/* Success Message */}
+              <Alert className="border-green-200 bg-green-50 dark:border-green-800 dark:bg-green-950">
+                <CheckCircle className="h-4 w-4 text-green-600" />
+                <AlertDescription className="text-green-800 dark:text-green-200">
+                  ✅ Query executed successfully! Found {queryResults.rowCount} row{queryResults.rowCount !== 1 ? 's' : ''}. Execution time: {queryResults.executionTime}ms
+                </AlertDescription>
+              </Alert>
+              
+              {/* Results Display */}
               <Card className="shadow-lg border-2 border-slate-200 dark:border-slate-700">
                 <CardHeader className="pb-3">
                   <CardTitle className="text-lg font-semibold text-slate-900 dark:text-slate-100">
-                    Query Results
+                    Results ({queryResults.rowCount} rows)
                   </CardTitle>
+                  <CardDescription className="text-sm text-slate-600 dark:text-slate-400">
+                    Columns: {queryResults.columns.join(', ')}
+                  </CardDescription>
                 </CardHeader>
-                <CardContent>
-                                    {queryResults.error ? (
-                    <div className="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg p-4">
-                      <p className="text-red-700 dark:text-red-400">{queryResults.error}</p>
-                    </div>
-                  ) : (
-                    <div className="bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 rounded-lg p-4">
-                      <p className="text-green-700 dark:text-green-400">
-                        ✅ Query executed successfully! 
-                        {queryResults.rowCount !== undefined && ` Found ${queryResults.rowCount} rows.`}
-                        {queryResults.executionTime && ` Execution time: ${queryResults.executionTime}ms`}
-                      </p>
-                    </div>
-                  )}
+                <CardContent className="p-4">
+                  <div className="overflow-auto max-h-96">
+                    <table className="w-full text-sm">
+                      <thead className="bg-slate-50 dark:bg-slate-800">
+                        <tr>
+                          {queryResults.columns.map((column: string, index: number) => (
+                            <th key={index} className="px-3 py-2 text-left font-medium text-slate-700 dark:text-slate-300">
+                              {column}
+                            </th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {queryResults.data.map((row: any, rowIndex: number) => (
+                          <tr key={rowIndex} className="border-b border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800">
+                            {queryResults.columns.map((column: string, colIndex: number) => (
+                              <td key={colIndex} className="px-3 py-2 text-slate-900 dark:text-slate-100">
+                                {typeof row[column] === 'object' ? JSON.stringify(row[column]) : String(row[column] || '')}
+                              </td>
+                            ))}
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
                 </CardContent>
               </Card>
             </div>
+          )}
+          
+          {!queryResults && connectionStatus === 'connected' && (
+            <Card className="shadow-lg border-2 border-slate-200 dark:border-slate-700">
+              <CardContent className="p-8 text-center">
+                <div className="text-slate-400 dark:text-slate-500">
+                  <Database className="h-12 w-12 mx-auto mb-4 opacity-50" />
+                  <p className="text-lg font-medium">No query results yet</p>
+                  <p className="text-sm">Generate a SQL query to see results here</p>
+                </div>
+              </CardContent>
+            </Card>
+          )}
+          
+          {connectionStatus !== 'connected' && (
+            <Card className="shadow-lg border-2 border-slate-200 dark:border-slate-700">
+              <CardContent className="p-8 text-center">
+                <div className="text-slate-400 dark:text-slate-500">
+                  <Database className="h-12 w-12 mx-auto mb-4 opacity-50" />
+                  <p className="text-lg font-medium">Database not connected</p>
+                  <p className="text-sm">Connect to a database to execute queries and see results</p>
+                </div>
+              </CardContent>
+            </Card>
           )}
         </div>
 
@@ -1032,7 +1058,7 @@ export default function Component() {
             <Card className="shadow-lg border-2 border-slate-200 dark:border-slate-700 hover:shadow-xl transition-shadow">
               <CardHeader className="pb-3">
                 <CardTitle className="text-lg font-semibold text-slate-900 dark:text-slate-100">
-                  {visualizations[0]?.title || 'Chart Visualization'}
+                  {visualizations[0]?.title || 'Visualization 1'}
                 </CardTitle>
                 <CardDescription className="text-sm text-slate-600 dark:text-slate-400">
                   {visualizations[0]?.description || 'Data insights from your query'}
@@ -1072,7 +1098,7 @@ export default function Component() {
             <Card className="shadow-lg border-2 border-slate-200 dark:border-slate-700 hover:shadow-xl transition-shadow">
               <CardHeader className="pb-3">
                 <CardTitle className="text-lg font-semibold text-slate-900 dark:text-slate-100">
-                  {visualizations[1]?.title || 'Trend Analysis'}
+                  {visualizations[1]?.title || 'Visualization 2'}
                 </CardTitle>
                 <CardDescription className="text-sm text-slate-600 dark:text-slate-400">
                   {visualizations[1]?.description || 'Time series and trend patterns'}
@@ -1112,7 +1138,7 @@ export default function Component() {
             <Card className="shadow-lg border-2 border-slate-200 dark:border-slate-700 hover:shadow-xl transition-shadow">
               <CardHeader className="pb-3">
                 <CardTitle className="text-lg font-semibold text-slate-900 dark:text-slate-100">
-                  {visualizations[2]?.title || 'Distribution Chart'}
+                  {visualizations[2]?.title || 'Visualization 3'}
                 </CardTitle>
                 <CardDescription className="text-sm text-slate-600 dark:text-slate-400">
                   {visualizations[2]?.description || 'Proportional data breakdown'}
@@ -1152,7 +1178,7 @@ export default function Component() {
             <Card className="shadow-lg border-2 border-slate-200 dark:border-slate-700 hover:shadow-xl transition-shadow">
               <CardHeader className="pb-3">
                 <CardTitle className="text-lg font-semibold text-slate-900 dark:text-slate-100">
-                  {visualizations[3]?.title || 'Data Summary'}
+                  {visualizations[3]?.title || 'Visualization 4'}
                 </CardTitle>
                 <CardDescription className="text-sm text-slate-600 dark:text-slate-400">
                   {visualizations[3]?.description || 'Query results overview'}

@@ -1,3 +1,7 @@
 {
+  "/api/database/test/route": "app/api/database/test/route.js",
+  "/api/database/execute/route": "app/api/database/execute/route.js",
+  "/api/nl2sql/route": "app/api/nl2sql/route.js",
+  "/api/visualization/generate/route": "app/api/visualization/generate/route.js",
   "/page": "app/page.js"
 }
