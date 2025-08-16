@@ -545,4 +545,135 @@ export class DatabaseConnection {
         error: 'Oracle metadata not yet implemented' 
     }
   }
+
+  async executeQuery(sqlQuery: string): Promise<{
+    data: any[]
+    rowCount: number
+    columns: string[]
+    executionTime: number
+  }> {
+    const startTime = Date.now()
+    
+    switch (this.config.type) {
+      case 'postgresql':
+        return this.executePostgreSQLQuery(sqlQuery, startTime)
+      case 'mysql':
+        return this.executeMySQLQuery(sqlQuery, startTime)
+      case 'sqlite':
+        return this.executeSQLiteQuery(sqlQuery, startTime)
+      case 'sqlserver':
+        throw new Error('SQL Server query execution not yet implemented')
+      case 'oracle':
+        throw new Error('Oracle query execution not yet implemented')
+      default:
+        throw new Error(`Unsupported database type: ${this.config.type}`)
+    }
+  }
+
+  private async executePostgreSQLQuery(sqlQuery: string, startTime: number): Promise<{
+    data: any[]
+    rowCount: number
+    columns: string[]
+    executionTime: number
+  }> {
+    const client = new Client({
+      host: this.config.host,
+      port: parseInt(this.config.port || '5432'),
+      database: this.config.database,
+      user: this.config.username,
+      password: this.config.password,
+    })
+
+    try {
+      await client.connect()
+      const result = await client.query(sqlQuery)
+      const executionTime = Date.now() - startTime
+      
+      await client.end()
+      
+      return {
+        data: result.rows || [],
+        rowCount: result.rowCount || 0,
+        columns: result.fields?.map(f => f.name) || [],
+        executionTime
+      }
+    } catch (error) {
+      await client.end()
+      throw error
+    }
+  }
+
+  private async executeMySQLQuery(sqlQuery: string, startTime: number): Promise<{
+    data: any[]
+    rowCount: number
+    columns: string[]
+    executionTime: number
+  }> {
+    const connection = await mysql.createConnection({
+      host: this.config.host,
+      port: parseInt(this.config.port || '3306'),
+      database: this.config.database,
+      user: this.config.username,
+      password: this.config.password,
+      connectTimeout: 10000,
+    })
+
+    try {
+      const [rows] = await connection.execute(sqlQuery)
+      const executionTime = Date.now() - startTime
+      
+      await connection.end()
+      
+      // MySQL returns rows as array and field info separately
+      const data = Array.isArray(rows) ? rows : []
+      const columns = Object.keys(data[0] || {})
+      
+      return {
+        data,
+        rowCount: data.length,
+        columns,
+        executionTime
+      }
+    } catch (error) {
+      await connection.end()
+      throw error
+    }
+  }
+
+  private async executeSQLiteQuery(sqlQuery: string, startTime: number): Promise<{
+    data: any[]
+    rowCount: number
+    columns: string[]
+    executionTime: number
+  }> {
+    if (!this.config.filePath) {
+      throw new Error('SQLite file path is required')
+    }
+
+    const db = new sqlite3.Database(this.config.filePath)
+    const query = promisify(db.all).bind(db)
+    const getColumns = promisify(db.all).bind(db)
+
+    try {
+      // Get column names first
+      const columnResult = await getColumns(`PRAGMA table_info((${sqlQuery.split('FROM')[1]?.split(' ')[1] || 'unknown'}))`)
+      const columns = (columnResult as any[]).map((col: any) => col.name)
+      
+      // Execute the query
+      const data = await query(sqlQuery)
+      const executionTime = Date.now() - startTime
+      
+      db.close()
+      
+      return {
+        data: (data as any[]) || [],
+        rowCount: (data as any[])?.length || 0,
+        columns,
+        executionTime
+      }
+    } catch (error) {
+      db.close()
+      throw error
+    }
+  }
 }

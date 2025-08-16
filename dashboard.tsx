@@ -1,13 +1,14 @@
 "use client"
 
 import { useState, useEffect } from "react"
-import { Search, Database, Shield } from "lucide-react"
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
-import { Textarea } from "@/components/ui/textarea"
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Label } from "@/components/ui/label"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import { Textarea } from "@/components/ui/textarea"
+import { Database, Search, BarChart3, TrendingUp, PieChart, Table } from "lucide-react"
+import VisualizationRenderer from "@/components/VisualizationRenderer"
 import { Alert, AlertDescription } from "@/components/ui/alert"
 
 export default function Component() {
@@ -20,6 +21,10 @@ export default function Component() {
   const [databaseMetadata, setDatabaseMetadata] = useState<any>(null)
   const [connectionStatus, setConnectionStatus] = useState<'idle' | 'testing' | 'connected' | 'failed' | 'no_tables'>('idle')
   const [connectionError, setConnectionError] = useState("")
+  const [queryResults, setQueryResults] = useState<any>(null)
+  const [visualizations, setVisualizations] = useState<any[]>([])
+  const [isExecuting, setIsExecuting] = useState(false)
+  const [isGeneratingVisualizations, setIsGeneratingVisualizations] = useState(false)
   const [connectionFields, setConnectionFields] = useState({
     host: "",
     port: "",
@@ -147,6 +152,85 @@ export default function Component() {
       setSqlQuery("-- Error generating SQL. Please try again.")
     } finally {
       setIsLoading(false)
+    }
+  }
+
+  const executeQuery = async () => {
+    if (!sqlQuery || connectionStatus !== 'connected') return
+    
+    setIsExecuting(true)
+    setQueryResults(null)
+    setVisualizations([])
+    
+    try {
+      // Execute the SQL query
+      const res = await fetch("/api/database/execute", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          sqlQuery: sqlQuery.replace(/^--.*$/gm, '').trim(), // Remove comments
+          databaseConfig: {
+            type: selectedDatabase,
+            host: connectionFields.host,
+            port: connectionFields.port,
+            database: connectionFields.databaseName,
+            username: connectionFields.username,
+            password: connectionFields.password,
+            filePath: connectionFields.filePath,
+            serviceName: connectionFields.serviceName,
+            serverName: connectionFields.serverName,
+          }
+        }),
+      })
+      
+      const data = await res.json()
+      
+      if (data.success) {
+        setQueryResults(data)
+        // Automatically generate visualizations
+        await generateVisualizations(data, sqlQuery)
+      } else {
+        setQueryResults({ error: data.error || 'Failed to execute query' })
+      }
+    } catch (error) {
+      console.error(error)
+      setQueryResults({ error: 'Failed to execute query' })
+    } finally {
+      setIsExecuting(false)
+    }
+  }
+
+  const generateVisualizations = async (queryData: any, sqlQuery: string) => {
+    if (!queryData.data || !queryData.columns) return
+    
+    setIsGeneratingVisualizations(true)
+    console.log('Starting visualization generation with:', { queryData, sqlQuery, databaseMetadata })
+    
+    try {
+      const res = await fetch("/api/visualization/generate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          data: queryData.data,
+          columns: queryData.columns,
+          sqlQuery: sqlQuery,
+          databaseMetadata: databaseMetadata
+        }),
+      })
+      
+      const data = await res.json()
+      console.log('Visualization generation response:', data)
+      
+      if (data.success) {
+        setVisualizations(data.visualizations)
+        console.log('Visualizations set:', data.visualizations)
+      } else {
+        console.error('Failed to generate visualizations:', data.error)
+      }
+    } catch (error) {
+      console.error('Error generating visualizations:', error)
+    } finally {
+      setIsGeneratingVisualizations(false)
     }
   }
 
@@ -854,12 +938,74 @@ export default function Component() {
                           Tip: Select a database and test connection for more accurate SQL generation
                         </p>
                       )}
+                      {connectionStatus === 'failed' && (
+                        <p className="text-xs mt-2 text-red-400">
+                          Database connection failed. Please check your connection details.
+                        </p>
+                      )}
+                      {connectionStatus === 'no_tables' && (
+                        <p className="text-xs mt-2 text-amber-400">
+                          Connected but no tables found. SQL may not be accurate.
+                        </p>
+                      )}
                     </div>
                   </div>
                 )}
               </div>
             </CardContent>
           </Card>
+          
+          {/* Execute Query Button */}
+          {sqlQuery && connectionStatus === 'connected' && (
+            <div className="mt-4">
+              <Button 
+                onClick={executeQuery}
+                disabled={isExecuting}
+                className="w-full"
+                variant="default"
+                size="lg"
+              >
+                {isExecuting ? (
+                  <>
+                    <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white mr-2"></div>
+                    Executing Query...
+                  </>
+                  ) : (
+                  <>
+                    🚀 Execute Query & Generate Visualizations
+                  </>
+                )}
+              </Button>
+            </div>
+          )}
+          
+          {/* Query Results */}
+          {queryResults && (
+            <div className="mt-4">
+              <Card className="shadow-lg border-2 border-slate-200 dark:border-slate-700">
+                <CardHeader className="pb-3">
+                  <CardTitle className="text-lg font-semibold text-slate-900 dark:text-slate-100">
+                    Query Results
+                  </CardTitle>
+                </CardHeader>
+                <CardContent>
+                                    {queryResults.error ? (
+                    <div className="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg p-4">
+                      <p className="text-red-700 dark:text-red-400">{queryResults.error}</p>
+                    </div>
+                  ) : (
+                    <div className="bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 rounded-lg p-4">
+                      <p className="text-green-700 dark:text-green-400">
+                        ✅ Query executed successfully! 
+                        {queryResults.rowCount !== undefined && ` Found ${queryResults.rowCount} rows.`}
+                        {queryResults.executionTime && ` Execution time: ${queryResults.executionTime}ms`}
+                      </p>
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+            </div>
+          )}
         </div>
 
         {/* Visualizations Grid */}
@@ -867,269 +1013,178 @@ export default function Component() {
           <div className="mb-6">
             <h2 className="text-2xl font-bold text-slate-900 dark:text-slate-100 mb-2">Data Visualizations</h2>
             <p className="text-slate-600 dark:text-slate-400">
-              Interactive charts and graphs generated from your query results
+              {connectionStatus === 'connected' 
+                ? 'Interactive charts and graphs generated from your query results'
+                : 'Connect to a database to generate visualizations from your SQL queries'
+              }
             </p>
+            {connectionStatus !== 'connected' && (
+              <div className="mt-3 p-3 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded-lg">
+                <p className="text-amber-800 dark:text-amber-200 text-sm">
+                  ⚠️ Database connection required to generate visualizations. Please connect to a database first.
+                </p>
+              </div>
+            )}
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-            {/* Bar Chart */}
+            {/* Visualization 1 - Chart Visualization */}
             <Card className="shadow-lg border-2 border-slate-200 dark:border-slate-700 hover:shadow-xl transition-shadow">
               <CardHeader className="pb-3">
                 <CardTitle className="text-lg font-semibold text-slate-900 dark:text-slate-100">
-                  Chart Visualization
+                  {visualizations[0]?.title || 'Chart Visualization'}
                 </CardTitle>
                 <CardDescription className="text-sm text-slate-600 dark:text-slate-400">
-                  Data insights from your query
+                  {visualizations[0]?.description || 'Data insights from your query'}
                 </CardDescription>
               </CardHeader>
               <CardContent className="p-4">
-                <div className="h-64 flex items-end justify-between gap-2 bg-gradient-to-t from-slate-50 to-white dark:from-slate-800 dark:to-slate-700 rounded-lg p-4">
-                  {sqlQuery ? (
-                    <>
-                      <div className="flex flex-col items-center gap-2">
-                        <div
-                          className="w-12 bg-gradient-to-t from-blue-600 to-blue-400 rounded-t"
-                          style={{ height: "120px" }}
-                        ></div>
-                        <span className="text-xs text-slate-600 dark:text-slate-400">North</span>
-                        <span className="text-xs font-semibold text-slate-800 dark:text-slate-200">$45K</span>
-                      </div>
-                      <div className="flex flex-col items-center gap-2">
-                        <div
-                          className="w-12 bg-gradient-to-t from-green-600 to-green-400 rounded-t"
-                          style={{ height: "180px" }}
-                        ></div>
-                        <span className="text-xs text-slate-600 dark:text-slate-400">South</span>
-                        <span className="text-xs font-semibold text-slate-800 dark:text-slate-200">$67K</span>
-                      </div>
-                      <div className="flex flex-col items-center gap-2">
-                        <div
-                          className="w-12 bg-gradient-to-t from-purple-600 to-purple-400 rounded-t"
-                          style={{ height: "90px" }}
-                        ></div>
-                        <span className="text-xs text-slate-600 dark:text-slate-400">East</span>
-                        <span className="text-xs font-semibold text-slate-800 dark:text-slate-200">$34K</span>
-                      </div>
-                      <div className="flex flex-col items-center gap-2">
-                        <div
-                          className="w-12 bg-gradient-to-t from-orange-600 to-orange-400 rounded-t"
-                          style={{ height: "150px" }}
-                        ></div>
-                        <span className="text-xs text-slate-600 dark:text-slate-400">West</span>
-                        <span className="text-xs font-semibold text-slate-800 dark:text-slate-200">$56K</span>
-                      </div>
-                    </>
-                  ) : (
-                    <div className="w-full h-full flex items-center justify-center">
-                      <div className="text-slate-400 opacity-50">
-                        <div className="w-16 h-16 border-2 border-dashed border-slate-300 dark:border-slate-600 rounded-lg"></div>
-                      </div>
+                {isGeneratingVisualizations ? (
+                  <div className="h-64 flex items-center justify-center">
+                    <div className="text-center">
+                      <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600 mx-auto mb-2"></div>
+                      <p className="text-sm text-slate-600 dark:text-slate-400">Generating visualization...</p>
                     </div>
-                  )}
-                </div>
+                  </div>
+                ) : visualizations[0]?.code ? (
+                  <VisualizationRenderer 
+                    code={visualizations[0].code} 
+                    data={queryResults?.data || []} 
+                    columns={queryResults?.columns || []} 
+                  />
+                ) : connectionStatus === 'connected' ? (
+                  <div className="h-64 flex items-center justify-center">
+                    <div className="text-center text-slate-400">
+                      <p>Execute a query to generate visualizations</p>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="h-64 flex items-center justify-center">
+                    <div className="text-center text-slate-400">
+                      <p>Connect to a database to generate visualizations</p>
+                    </div>
+                  </div>
+                )}
               </CardContent>
             </Card>
 
-            {/* Line Chart */}
+            {/* Visualization 2 - Trend Analysis */}
             <Card className="shadow-lg border-2 border-slate-200 dark:border-slate-700 hover:shadow-xl transition-shadow">
               <CardHeader className="pb-3">
                 <CardTitle className="text-lg font-semibold text-slate-900 dark:text-slate-100">
-                  Trend Analysis
+                  {visualizations[1]?.title || 'Trend Analysis'}
                 </CardTitle>
                 <CardDescription className="text-sm text-slate-600 dark:text-slate-400">
-                  Pattern visualization
+                  {visualizations[1]?.description || 'Time series and trend patterns'}
                 </CardDescription>
               </CardHeader>
               <CardContent className="p-4">
-                <div className="h-64 bg-gradient-to-t from-slate-50 to-white dark:from-slate-800 dark:to-slate-700 rounded-lg p-4 relative">
-                  {sqlQuery ? (
-                    <div className="w-full h-full relative">
-                      {/* Grid lines */}
-                      <div className="absolute inset-0 grid grid-rows-4 opacity-20">
-                        {[...Array(4)].map((_, i) => (
-                          <div key={i} className="border-b border-slate-300 dark:border-slate-600"></div>
-                        ))}
-                      </div>
-                      {/* Line chart path */}
-                      <svg className="w-full h-full" viewBox="0 0 300 200">
-                        <path
-                          d="M 20 160 Q 70 140 100 120 T 180 80 T 280 60"
-                          stroke="url(#gradient)"
-                          strokeWidth="3"
-                          fill="none"
-                          className="drop-shadow-sm"
-                        />
-                        <defs>
-                          <linearGradient id="gradient" x1="0%" y1="0%" x2="100%" y2="0%">
-                            <stop offset="0%" stopColor="#3B82F6" />
-                            <stop offset="50%" stopColor="#8B5CF6" />
-                            <stop offset="100%" stopColor="#06B6D4" />
-                          </linearGradient>
-                        </defs>
-                        {/* Data points */}
-                        <circle cx="20" cy="160" r="4" fill="#3B82F6" />
-                        <circle cx="100" cy="120" r="4" fill="#8B5CF6" />
-                        <circle cx="180" cy="80" r="4" fill="#06B6D4" />
-                        <circle cx="280" cy="60" r="4" fill="#10B981" />
-                      </svg>
-                      {/* Labels */}
-                      <div className="absolute bottom-2 left-4 text-xs text-slate-600 dark:text-slate-400">Jan</div>
-                      <div className="absolute bottom-2 right-4 text-xs text-slate-600 dark:text-slate-400">Jun</div>
-                      <div className="absolute top-2 right-4 text-xs font-semibold text-green-600">↗ +23%</div>
+                {isGeneratingVisualizations ? (
+                  <div className="h-64 flex items-center justify-center">
+                    <div className="text-center">
+                      <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600 mx-auto mb-2"></div>
+                      <p className="text-sm text-slate-600 dark:text-slate-400">Generating visualization...</p>
                     </div>
-                  ) : (
-                    <div className="w-full h-full flex items-center justify-center">
-                      <div className="text-slate-400 opacity-50">
-                        <div className="w-16 h-16 border-2 border-dashed border-slate-300 dark:border-slate-600 rounded-lg"></div>
-                      </div>
+                  </div>
+                ) : visualizations[1]?.code ? (
+                  <VisualizationRenderer 
+                    code={visualizations[1].code} 
+                    data={queryResults?.data || []} 
+                    columns={queryResults?.columns || []} 
+                  />
+                ) : connectionStatus === 'connected' ? (
+                  <div className="h-64 flex items-center justify-center">
+                    <div className="text-center text-slate-400">
+                      <p>Execute a query to generate visualizations</p>
                     </div>
-                  )}
-                </div>
+                  </div>
+                ) : (
+                  <div className="h-64 flex items-center justify-center">
+                    <div className="text-center text-slate-400">
+                      <p>Connect to a database to generate visualizations</p>
+                    </div>
+                  </div>
+                )}
               </CardContent>
             </Card>
 
-            {/* Pie Chart */}
+            {/* Visualization 3 - Distribution Chart */}
             <Card className="shadow-lg border-2 border-slate-200 dark:border-slate-700 hover:shadow-xl transition-shadow">
               <CardHeader className="pb-3">
                 <CardTitle className="text-lg font-semibold text-slate-900 dark:text-slate-100">
-                  Distribution Chart
+                  {visualizations[2]?.title || 'Distribution Chart'}
                 </CardTitle>
                 <CardDescription className="text-sm text-slate-600 dark:text-slate-400">
-                  Proportional data breakdown
+                  {visualizations[2]?.description || 'Proportional data breakdown'}
                 </CardDescription>
               </CardHeader>
               <CardContent className="p-4">
-                <div className="h-64 bg-gradient-to-t from-slate-50 to-white dark:from-slate-800 dark:to-slate-700 rounded-lg p-4 flex items-center justify-center">
-                  {sqlQuery ? (
-                    <div className="flex items-center gap-6">
-                      {/* Pie Chart */}
-                      <div className="relative">
-                        <svg width="120" height="120" viewBox="0 0 120 120" className="transform -rotate-90">
-                          <circle cx="60" cy="60" r="50" fill="transparent" stroke="#E5E7EB" strokeWidth="20" />
-                          <circle
-                            cx="60"
-                            cy="60"
-                            r="50"
-                            fill="transparent"
-                            stroke="#3B82F6"
-                            strokeWidth="20"
-                            strokeDasharray="94.2 314"
-                            strokeDashoffset="0"
-                          />
-                          <circle
-                            cx="60"
-                            cy="60"
-                            r="50"
-                            fill="transparent"
-                            stroke="#10B981"
-                            strokeWidth="20"
-                            strokeDasharray="62.8 314"
-                            strokeDashoffset="-94.2"
-                          />
-                          <circle
-                            cx="60"
-                            cy="60"
-                            r="50"
-                            fill="transparent"
-                            stroke="#F59E0B"
-                            strokeWidth="20"
-                            strokeDasharray="47.1 314"
-                            strokeDashoffset="-157"
-                          />
-                          <circle
-                            cx="60"
-                            cy="60"
-                            r="50"
-                            fill="transparent"
-                            stroke="#EF4444"
-                            strokeWidth="20"
-                            strokeDasharray="110.9 314"
-                            strokeDashoffset="-204.1"
-                          />
-                        </svg>
-                      </div>
-                      {/* Legend */}
-                      <div className="space-y-2">
-                        <div className="flex items-center gap-2">
-                          <div className="w-3 h-3 bg-blue-500 rounded-full"></div>
-                          <span className="text-sm text-slate-700 dark:text-slate-300">Enterprise (30%)</span>
-                        </div>
-                        <div className="flex items-center gap-2">
-                          <div className="w-3 h-3 bg-green-500 rounded-full"></div>
-                          <span className="text-sm text-slate-700 dark:text-slate-300">SMB (20%)</span>
-                        </div>
-                        <div className="flex items-center gap-2">
-                          <div className="w-3 h-3 bg-yellow-500 rounded-full"></div>
-                          <span className="text-sm text-slate-700 dark:text-slate-300">Startup (15%)</span>
-                        </div>
-                        <div className="flex items-center gap-2">
-                          <div className="w-3 h-3 bg-red-500 rounded-full"></div>
-                          <span className="text-sm text-slate-700 dark:text-slate-300">Individual (35%)</span>
-                        </div>
-                      </div>
+                {isGeneratingVisualizations ? (
+                  <div className="h-64 flex items-center justify-center">
+                    <div className="text-center">
+                      <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600 mx-auto mb-2"></div>
+                      <p className="text-sm text-slate-600 dark:text-slate-400">Generating visualization...</p>
                     </div>
-                  ) : (
-                    <div className="text-slate-400 opacity-50">
-                      <div className="w-16 h-16 border-2 border-dashed border-slate-300 dark:border-slate-600 rounded-lg"></div>
+                  </div>
+                ) : visualizations[2]?.code ? (
+                  <VisualizationRenderer 
+                    code={visualizations[2].code} 
+                    data={queryResults?.data || []} 
+                    columns={queryResults?.columns || []} 
+                  />
+                ) : connectionStatus === 'connected' ? (
+                  <div className="h-64 flex items-center justify-center">
+                    <div className="text-center text-slate-400">
+                      <p>Execute a query to generate visualizations</p>
                     </div>
-                  )}
-                </div>
+                  </div>
+                ) : (
+                  <div className="h-64 flex items-center justify-center">
+                    <div className="text-center text-slate-400">
+                      <p>Connect to a database to generate visualizations</p>
+                    </div>
+                  </div>
+                )}
               </CardContent>
             </Card>
 
-            {/* Data Table */}
+            {/* Visualization 4 - Data Summary */}
             <Card className="shadow-lg border-2 border-slate-200 dark:border-slate-700 hover:shadow-xl transition-shadow">
               <CardHeader className="pb-3">
-                <CardTitle className="text-lg font-semibold text-slate-900 dark:text-slate-100">Data Summary</CardTitle>
+                <CardTitle className="text-lg font-semibold text-slate-900 dark:text-slate-100">
+                  {visualizations[3]?.title || 'Data Summary'}
+                </CardTitle>
                 <CardDescription className="text-sm text-slate-600 dark:text-slate-400">
-                  Query results overview
+                  {visualizations[3]?.description || 'Query results overview'}
                 </CardDescription>
               </CardHeader>
               <CardContent className="p-4">
-                <div className="h-64 bg-gradient-to-t from-slate-50 to-white dark:from-slate-800 dark:to-slate-700 rounded-lg p-4">
-                  {sqlQuery ? (
-                    <div className="space-y-3">
-                      <div className="grid grid-cols-3 gap-4 text-xs font-semibold text-slate-600 dark:text-slate-400 border-b pb-2">
-                        <span>Customer</span>
-                        <span>Revenue</span>
-                        <span>Growth</span>
-                      </div>
-                      <div className="space-y-2">
-                        <div className="grid grid-cols-3 gap-4 text-sm py-2 hover:bg-slate-100 dark:hover:bg-slate-700 rounded">
-                          <span className="text-slate-800 dark:text-slate-200">Acme Corp</span>
-                          <span className="font-semibold text-green-600">$125,400</span>
-                          <span className="text-green-600 text-xs">↗ +12%</span>
-                        </div>
-                        <div className="grid grid-cols-3 gap-4 text-sm py-2 hover:bg-slate-100 dark:hover:bg-slate-700 rounded">
-                          <span className="text-slate-800 dark:text-slate-200">TechStart Inc</span>
-                          <span className="font-semibold text-green-600">$98,750</span>
-                          <span className="text-green-600 text-xs">↗ +8%</span>
-                        </div>
-                        <div className="grid grid-cols-3 gap-4 text-sm py-2 hover:bg-slate-100 dark:hover:bg-slate-700 rounded">
-                          <span className="text-slate-800 dark:text-slate-200">Global Systems</span>
-                          <span className="font-semibold text-green-600">$87,200</span>
-                          <span className="text-red-600 text-xs">↘ -3%</span>
-                        </div>
-                        <div className="grid grid-cols-3 gap-4 text-sm py-2 hover:bg-slate-100 dark:hover:bg-slate-700 rounded">
-                          <span className="text-slate-800 dark:text-slate-200">Innovation Labs</span>
-                          <span className="font-semibold text-green-600">$76,900</span>
-                          <span className="text-green-600 text-xs">↗ +15%</span>
-                        </div>
-                        <div className="grid grid-cols-3 gap-4 text-sm py-2 hover:bg-slate-100 dark:hover:bg-slate-700 rounded">
-                          <span className="text-slate-800 dark:text-slate-200">Digital Solutions</span>
-                          <span className="font-semibold text-green-600">$65,300</span>
-                          <span className="text-green-600 text-xs">↗ +6%</span>
-                        </div>
-                      </div>
+                {isGeneratingVisualizations ? (
+                  <div className="h-64 flex items-center justify-center">
+                    <div className="text-center">
+                      <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600 mx-auto mb-2"></div>
+                      <p className="text-sm text-slate-600 dark:text-slate-400">Generating visualization...</p>
                     </div>
-                  ) : (
-                    <div className="w-full h-full flex items-center justify-center">
-                      <div className="text-slate-400 opacity-50">
-                        <div className="w-16 h-16 border-2 border-dashed border-slate-300 dark:border-slate-600 rounded-lg"></div>
-                      </div>
+                  </div>
+                ) : visualizations[3]?.code ? (
+                  <VisualizationRenderer 
+                    code={visualizations[3].code} 
+                    data={queryResults?.data || []} 
+                    columns={queryResults?.columns || []} 
+                  />
+                ) : connectionStatus === 'connected' ? (
+                  <div className="h-64 flex items-center justify-center">
+                    <div className="text-center text-slate-400">
+                      <p>Execute a query to generate visualizations</p>
                     </div>
-                  )}
-                </div>
+                  </div>
+                ) : (
+                  <div className="h-64 flex items-center justify-center">
+                    <div className="text-center text-slate-400">
+                      <p>Connect to a database to generate visualizations</p>
+                    </div>
+                  </div>
+                )}
               </CardContent>
             </Card>
           </div>

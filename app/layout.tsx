@@ -20,6 +20,11 @@ export default function RootLayout({
 }) {
   return (
     <html lang="en">
+      <head>
+        <meta name="description" content="Convert your natural language queries into powerful SQL statements and stunning visualizations instantly" />
+        <meta name="generator" content="v0.app" />
+        <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+      </head>
       <body className={inter.className} suppressHydrationWarning={true}>
         <Navigation />
         {children}
